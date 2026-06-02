@@ -1,0 +1,11 @@
+{
+  "name": "chapteros",
+  "version": "1.0.0",
+  "description": "ChapterOS — a distraction-free, dependency-free book editor for the browser: chapter sidebar, annotated links, auto-renumbering footnotes, version snapshots, app-owned undo, autosave, and Markdown/HTML export.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "private": true
+}

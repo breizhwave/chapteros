@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChapterOS</title>
+<style>
+  :root {
+    --bg: #1c1b1a;
+    --panel: #242322;
+    --panel-2: #2c2b29;
+    --border: #3a3937;
+    --text: #e8e4dc;
+    --muted: #9a948a;
+    --accent: #c9a368;
+    --accent-soft: rgba(201,163,104,0.15);
+    --danger: #cf6a5a;
+    --paper: #f6f1e7;
+    --paper-text: #2b2722;
+    --sidebar-w: 270px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    overflow: hidden;
+  }
+  button { font-family: inherit; cursor: pointer; }
+
+  /* ---------- Sidebar ---------- */
+  #sidebar {
+    width: var(--sidebar-w);
+    min-width: var(--sidebar-w);
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  .side-head {
+    padding: 18px 16px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .book-title-input {
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 18px;
+    font-weight: 600;
+    padding: 4px 2px;
+    outline: none;
+    border-bottom: 1px dashed transparent;
+  }
+  .book-title-input:focus { border-bottom-color: var(--accent); }
+  .side-sub {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 6px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .chapters-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px 6px;
+    font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .add-btn {
+    background: var(--accent-soft); color: var(--accent);
+    border: 1px solid transparent; border-radius: 6px;
+    width: 24px; height: 24px; font-size: 16px; line-height: 1;
+    display: grid; place-items: center;
+  }
+  .add-btn:hover { border-color: var(--accent); }
+  #chapter-list { list-style: none; margin: 0; padding: 4px 8px; overflow-y: auto; flex: 1; }
+  .chapter {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 10px; margin: 2px 0;
+    border-radius: 7px; color: var(--text);
+    cursor: pointer; user-select: none;
+    border: 1px solid transparent;
+  }
+  .chapter:hover { background: var(--panel-2); }
+  .chapter.active { background: var(--accent-soft); border-color: rgba(201,163,104,0.35); }
+  .chapter .grip { color: var(--muted); cursor: grab; font-size: 13px; }
+  .chapter .name { flex: 1; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chapter .wc { font-size: 10px; color: var(--muted); }
+  .chapter.dragging { opacity: .4; }
+  .chapter.drag-over { border-top: 2px solid var(--accent); }
+  .row-del {
+    background: none; border: none; color: var(--muted); font-size: 14px;
+    opacity: 0; padding: 0 2px;
+  }
+  .chapter:hover .row-del { opacity: 1; }
+  .row-del:hover { color: var(--danger); }
+  .side-foot {
+    border-top: 1px solid var(--border);
+    padding: 10px 14px;
+    display: flex; flex-direction: column; gap: 8px;
+    font-size: 12px;
+  }
+  .foot-row { display: flex; gap: 8px; }
+  .ghost-btn {
+    flex: 1; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 7px 8px; font-size: 12px;
+  }
+  .ghost-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .save-status { color: var(--muted); font-size: 11px; text-align: center; }
+  .save-status.dirty { color: var(--accent); }
+
+  /* ---------- Main ---------- */
+  #main { flex: 1; display: flex; flex-direction: column; height: 100vh; }
+  #toolbar {
+    display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+    padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .tool {
+    background: transparent; border: 1px solid transparent; color: var(--text);
+    border-radius: 6px; min-width: 32px; height: 32px; padding: 0 8px;
+    font-size: 14px; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .tool:hover { background: var(--panel-2); }
+  .tool.active { background: var(--accent-soft); color: var(--accent); }
+  .tool b, .tool i, .tool u, .tool s { pointer-events: none; }
+  .sep { width: 1px; height: 22px; background: var(--border); margin: 0 6px; }
+  .tool-link { color: var(--accent); }
+
+  #editor-scroll { flex: 1; overflow-y: auto; padding: 48px 24px 120px; }
+  #chapter-title {
+    max-width: 740px; margin: 0 auto 4px; outline: none;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 30px; font-weight: 600; color: var(--text);
+    border: none; background: transparent; width: 100%;
+  }
+  .title-wrap { max-width: 740px; margin: 0 auto 18px; }
+  .title-meta { color: var(--muted); font-size: 12px; }
+
+  #editor {
+    max-width: 740px; margin: 0 auto;
+    background: var(--paper); color: var(--paper-text);
+    min-height: 60vh; border-radius: 8px;
+    padding: 56px 64px; outline: none;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 18px; line-height: 1.75;
+    text-align: justify;
+    hyphens: auto; -webkit-hyphens: auto;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+  }
+  /* headings read better flush-left even when prose is justified */
+  #editor h1, #editor h2, #editor h3 { text-align: left; hyphens: none; }
+  #editor:focus { box-shadow: 0 10px 40px rgba(0,0,0,0.45); }
+  #editor h1 { font-size: 28px; margin: .8em 0 .4em; }
+  #editor h2 { font-size: 23px; margin: .8em 0 .4em; }
+  #editor h3 { font-size: 20px; margin: .8em 0 .4em; }
+  #editor p { margin: 0 0 1em; }
+  #editor blockquote {
+    border-left: 3px solid var(--accent); margin: 1em 0; padding: .2em 1.2em;
+    color: #5b5349; font-style: italic;
+  }
+  #editor a { color: #8a5a1e; text-decoration: underline; text-decoration-color: rgba(138,90,30,.4); cursor: pointer; }
+  #editor ul, #editor ol { margin: 0 0 1em; padding-left: 1.4em; }
+  #editor img { max-width: 100%; border-radius: 4px; }
+  #editor:empty:before { content: attr(data-placeholder); color: #b3a994; }
+  #editor hr { border: none; border-top: 1px solid #d8cdb8; margin: 2em 0; }
+
+  /* ---------- Link popover ---------- */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    display: none; align-items: center; justify-content: center; z-index: 50;
+  }
+  .modal-backdrop.show { display: flex; }
+  .modal {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    width: 420px; max-width: 92vw; padding: 22px; box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  }
+  .modal h3 { margin: 0 0 16px; font-size: 16px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  .field input {
+    width: 100%; background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 7px; padding: 9px 11px; color: var(--text); font-size: 14px; outline: none;
+  }
+  .field input:focus { border-color: var(--accent); }
+  .field .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .modal-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 18px; }
+  .modal-actions .left { display: flex; gap: 8px; }
+  .btn-primary { background: var(--accent); color: #2a2317; border: none; border-radius: 7px; padding: 9px 18px; font-weight: 600; }
+  .btn-quiet { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 9px 16px; }
+  .btn-quiet:hover { border-color: var(--accent); }
+  .btn-danger { color: var(--danger); }
+
+  /* link tooltip preview */
+  #link-tip {
+    position: fixed; z-index: 40; display: none;
+    background: #111; color: #eee; border: 1px solid #444;
+    padding: 6px 10px; border-radius: 6px; font-size: 12px; max-width: 320px;
+    pointer-events: none; box-shadow: 0 6px 20px rgba(0,0,0,.4);
+  }
+  #link-tip .u { color: var(--accent); display: block; margin-top: 2px; font-size: 11px; word-break: break-all; }
+
+  /* ---------- Right panel (Annotations / Versions) ---------- */
+  #right-panel {
+    width: 300px; min-width: 300px; background: var(--panel);
+    border-left: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh;
+  }
+  body.notes-hidden #right-panel { display: none; }
+  .rp-tabs { display: flex; border-bottom: 1px solid var(--border); }
+  .rp-tab {
+    flex: 1; background: transparent; border: none; color: var(--muted);
+    padding: 13px 8px; font-size: 12px; letter-spacing: .05em; text-transform: uppercase;
+    border-bottom: 2px solid transparent;
+  }
+  .rp-tab:hover { color: var(--text); }
+  .rp-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .rp-pane { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .rp-pane[hidden] { display: none; }
+  .versions-toolbar { padding: 12px 14px 4px; }
+  .ver-save-btn {
+    width: 100%; background: var(--accent-soft); color: var(--accent);
+    border: 1px solid rgba(201,163,104,0.35); border-radius: 8px;
+    padding: 9px; font-size: 13px; font-weight: 600;
+  }
+  .ver-save-btn:hover { border-color: var(--accent); }
+  .versions-scroll { flex: 1; overflow-y: auto; padding: 8px 14px 40px; }
+  .ver-item {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 11px; margin-bottom: 8px;
+  }
+  .ver-item.current { border-color: rgba(201,163,104,0.5); }
+  .ver-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+  .ver-tag { font-size: 13px; font-weight: 700; color: var(--accent); }
+  .ver-time { font-size: 11px; color: var(--muted); }
+  .ver-meta { font-size: 11px; color: var(--muted); margin: 4px 0 8px; }
+  .ver-label-input {
+    width: 100%; background: transparent; border: none; border-bottom: 1px dashed var(--border);
+    color: var(--text); font-size: 12px; font-family: inherit; padding: 2px 0 5px; margin-bottom: 8px; outline: none;
+  }
+  .ver-label-input:focus { border-bottom-color: var(--accent); }
+  .ver-actions { display: flex; gap: 6px; }
+  .ver-btn {
+    flex: 1; background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px; font-size: 12px;
+  }
+  .ver-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .ver-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+  .ver-current-badge { font-size: 10px; color: var(--accent); text-transform: uppercase; letter-spacing: .05em; }
+  .notes-head {
+    padding: 16px 16px 12px; border-bottom: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .notes-head > span:first-child { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .notes-sub { font-size: 13px; color: var(--text); font-weight: 600; }
+  .notes-scroll { flex: 1; overflow-y: auto; padding: 6px 14px 40px; }
+  .notes-section { margin-top: 16px; }
+  .notes-label { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  .notes-label .dim { color: #6f6a61; font-weight: 400; }
+  .note-area {
+    width: 100%; min-height: 70px; resize: vertical;
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text); font-family: inherit; font-size: 13px; line-height: 1.5; padding: 9px 11px; outline: none;
+  }
+  .note-area:focus { border-color: var(--accent); }
+  .notes-empty { font-size: 12px; color: #6f6a61; line-height: 1.5; padding: 4px 2px; }
+  .fn-item, .ann-item {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 9px 10px; margin-bottom: 8px;
+  }
+  .fn-item { display: flex; gap: 8px; }
+  .fn-num {
+    color: var(--accent); font-weight: 700; font-size: 12px; cursor: pointer;
+    min-width: 20px; padding-top: 6px;
+  }
+  .fn-num:hover { text-decoration: underline; }
+  .fn-body { flex: 1; }
+  .fn-text {
+    width: 100%; min-height: 34px; resize: vertical;
+    background: transparent; border: none; color: var(--text);
+    font-family: inherit; font-size: 13px; line-height: 1.5; outline: none; padding: 4px 0;
+  }
+  .fn-del {
+    background: none; border: none; color: var(--muted); font-size: 13px; padding: 2px 4px; align-self: flex-start;
+  }
+  .fn-del:hover { color: var(--danger); }
+  .ann-item { cursor: pointer; }
+  .ann-item:hover { border-color: var(--accent); }
+  .ann-text { font-size: 13px; color: var(--text); font-weight: 600; }
+  .ann-desc { font-size: 12px; color: var(--text); margin: 3px 0; font-style: italic; }
+  .ann-url { font-size: 11px; color: var(--accent); word-break: break-all; }
+  .ann-nodesc { font-size: 11px; color: #6f6a61; font-style: italic; }
+
+  /* footnote markers inside the prose */
+  #editor sup.footnote-ref {
+    color: #8a5a1e; font-weight: 700; cursor: pointer; font-size: .7em;
+    padding: 0 1px; vertical-align: super;
+  }
+  #editor sup.footnote-ref.fn-active { background: var(--accent); color: #2a2317; border-radius: 3px; }
+
+  .toast {
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    padding: 10px 18px; border-radius: 8px; font-size: 13px; opacity: 0;
+    transition: all .25s; z-index: 60; pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<aside id="sidebar">
+  <div class="side-head">
+    <input id="book-title" class="book-title-input" placeholder="Untitled Book" value="Untitled Book">
+    <div class="side-sub" id="book-stats">0 chapters · 0 words</div>
+  </div>
+  <div class="chapters-head">
+    <span>Chapters</span>
+    <button class="add-btn" id="add-chapter" title="New chapter">+</button>
+  </div>
+  <ul id="chapter-list"></ul>
+  <div class="side-foot">
+    <div class="save-status" id="save-status">All changes saved locally</div>
+    <div class="foot-row">
+      <button class="ghost-btn" id="open-file" title="Open a .html or .md book from disk">↥ Open</button>
+      <button class="ghost-btn" id="connect-disk" title="Auto-save to a real file on disk">⛁ Save to file</button>
+    </div>
+    <div class="foot-row">
+      <button class="ghost-btn" id="export-md">↓ .md</button>
+      <button class="ghost-btn" id="export-html">↓ .html</button>
+    </div>
+    <button class="ghost-btn" id="load-demo" title="Load the Alice in Wonderland sample (your current book is saved as a version first)">📚 Load sample book</button>
+    <input type="file" id="file-input" accept=".html,.htm,.md,.markdown" hidden>
+  </div>
+</aside>
+
+<section id="main">
+  <div id="toolbar">
+    <button class="tool" data-cmd="formatBlock" data-val="H1" title="Heading 1">H1</button>
+    <button class="tool" data-cmd="formatBlock" data-val="H2" title="Heading 2">H2</button>
+    <button class="tool" data-cmd="formatBlock" data-val="H3" title="Heading 3">H3</button>
+    <button class="tool" data-cmd="formatBlock" data-val="P" title="Paragraph">¶</button>
+    <span class="sep"></span>
+    <button class="tool" data-cmd="bold" title="Bold (Ctrl/Cmd+B)"><b>B</b></button>
+    <button class="tool" data-cmd="italic" title="Italic (Ctrl/Cmd+I)"><i>I</i></button>
+    <button class="tool" data-cmd="underline" title="Underline (Ctrl/Cmd+U)"><u>U</u></button>
+    <button class="tool" data-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
+    <span class="sep"></span>
+    <button class="tool" data-cmd="insertUnorderedList" title="Bullet list">•</button>
+    <button class="tool" data-cmd="insertOrderedList" title="Numbered list">1.</button>
+    <button class="tool" data-cmd="formatBlock" data-val="BLOCKQUOTE" title="Quote">❝</button>
+    <button class="tool" data-cmd="insertHorizontalRule" title="Divider">―</button>
+    <span class="sep"></span>
+    <button class="tool tool-link" id="btn-link" title="Insert / edit link (Ctrl/Cmd+K)">🔗 Link</button>
+    <button class="tool" id="btn-unlink" title="Remove link">⛓×</button>
+    <button class="tool" id="btn-footnote" title="Insert footnote (Ctrl/Cmd+E)">⁺ Note</button>
+    <span class="sep"></span>
+    <button class="tool" data-cmd="undo" title="Undo">↶</button>
+    <button class="tool" data-cmd="redo" title="Redo">↷</button>
+    <span style="flex:1"></span>
+    <button class="tool" id="toggle-notes" title="Toggle notes panel">☰ Notes</button>
+  </div>
+
+  <div id="editor-scroll">
+    <div class="title-wrap">
+      <input id="chapter-title" placeholder="Chapter title">
+      <div class="title-meta" id="title-meta"></div>
+    </div>
+    <div id="editor" contenteditable="true" data-placeholder="Begin writing your chapter…"></div>
+  </div>
+</section>
+
+<aside id="right-panel">
+  <div class="rp-tabs">
+    <button class="rp-tab active" data-tab="annotations">Annotations</button>
+    <button class="rp-tab" data-tab="versions">Versions</button>
+  </div>
+
+  <div class="rp-pane" id="pane-annotations">
+    <div class="notes-head">
+      <span>Annotations</span>
+      <span class="notes-sub" id="notes-chapter-name"></span>
+    </div>
+    <div class="notes-scroll">
+      <div class="notes-section">
+        <div class="notes-label">Chapter note <span class="dim">(scratchpad — not exported into the prose)</span></div>
+        <textarea id="chapter-note" class="note-area" placeholder="Outline, reminders, things to fix…"></textarea>
+      </div>
+      <div class="notes-section">
+        <div class="notes-label">Footnotes <span class="dim" id="fn-count">0</span></div>
+        <div id="footnote-list"></div>
+        <div class="notes-empty" id="fn-empty">No footnotes yet. Place your cursor in the text and press <b>⁺ Note</b>.</div>
+      </div>
+      <div class="notes-section">
+        <div class="notes-label">Links in this chapter <span class="dim" id="link-count">0</span></div>
+        <div id="annotation-list"></div>
+        <div class="notes-empty" id="links-empty">Links you add with a description appear here.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rp-pane" id="pane-versions" hidden>
+    <div class="notes-head">
+      <span>Versions</span>
+      <span class="notes-sub" id="versions-sub">Snapshots of the whole book</span>
+    </div>
+    <div class="versions-toolbar">
+      <button class="ver-save-btn" id="save-version">＋ Save version (⌘/Ctrl + S)</button>
+    </div>
+    <div class="versions-scroll">
+      <div id="version-list"></div>
+      <div class="notes-empty" id="versions-empty">No versions yet. Press <b>⌘/Ctrl + S</b> to snapshot the whole book. Autosave keeps your latest text safe between snapshots.</div>
+    </div>
+  </div>
+</aside>
+
+<!-- Link modal -->
+<div class="modal-backdrop" id="link-modal">
+  <div class="modal">
+    <h3 id="link-modal-title">Insert link</h3>
+    <div class="field">
+      <label>Link text</label>
+      <input id="link-text" placeholder="What the reader sees">
+    </div>
+    <div class="field">
+      <label>URL</label>
+      <input id="link-url" placeholder="https://… or #chapter / note ref">
+    </div>
+    <div class="field">
+      <label>Description (note / tooltip)</label>
+      <input id="link-desc" placeholder="A note shown on hover — your annotation">
+      <div class="hint">Saved as the link title. Exported to Markdown as [text](url "description").</div>
+    </div>
+    <div class="modal-actions">
+      <div class="left">
+        <button class="btn-quiet btn-danger" id="link-remove" style="display:none">Remove</button>
+      </div>
+      <div class="left">
+        <button class="btn-quiet" id="link-cancel">Cancel</button>
+        <button class="btn-primary" id="link-save">Save link</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="link-tip"></div>
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
