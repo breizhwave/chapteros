@@ -112,6 +112,13 @@
   .ghost-btn:hover { border-color: var(--accent); color: var(--accent); }
   .save-status { color: var(--muted); font-size: 11px; text-align: center; }
   .save-status.dirty { color: var(--accent); }
+  .credits {
+    text-align: center; font-size: 10px; color: var(--muted);
+    line-height: 1.6; letter-spacing: .2px;
+  }
+  .credits a { color: var(--muted); text-decoration: none; }
+  .credits a:hover { color: var(--accent); }
+  .credits .dot { opacity: .45; margin: 0 4px; }
 
   /* ---------- Main ---------- */
   #main { flex: 1; display: flex; flex-direction: column; height: 100vh; }
@@ -333,6 +340,13 @@
     </div>
     <button class="ghost-btn" id="load-demo" title="Load the Alice in Wonderland sample (your current book is saved as a version first)">📚 Load sample book</button>
     <input type="file" id="file-input" accept=".html,.htm,.md,.markdown" hidden>
+    <div class="credits">
+      <a href="https://github.com/breizhwave/chapteros" target="_blank" rel="noopener">GitHub</a>
+      <span class="dot">·</span>
+      <a href="https://webmasterbulletin.net/2026/06/02/art-of-prototyping-chapter-os/" target="_blank" rel="noopener" title="Art of Prototyping: ChapterOS">Article</a>
+      <span class="dot">·</span>
+      <a href="https://wave.bzh" target="_blank" rel="noopener">wave.bzh</a>
+    </div>
   </div>
 </aside>
 
