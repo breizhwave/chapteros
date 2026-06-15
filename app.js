@@ -57,6 +57,13 @@ const els = {
   versionsEmpty: $('#versions-empty'),
   versionsSub: $('#versions-sub'),
   saveVersionBtn: $('#save-version'),
+  // people
+  panePeople: $('#pane-people'),
+  peopleList: $('#people-list'),
+  peopleEmpty: $('#people-empty'),
+  peopleSuggestions: $('#people-suggestions'),
+  personAdd: $('#person-add'),
+  personAddBtn: $('#person-add-btn'),
 };
 const tabs = document.querySelectorAll('.rp-tab');
 
@@ -84,6 +91,11 @@ function migrateState(s) {
   if (typeof s.versionCounter !== 'number') {
     s.versionCounter = s.versions.reduce((m, v) => Math.max(m, v.n || 0), 0);
   }
+  if (!Array.isArray(s.people)) s.people = [];
+  s.people.forEach((p) => {
+    if (!Array.isArray(p.aliases)) p.aliases = [];
+    if (typeof p.note !== 'string') p.note = '';
+  });
   return s;
 }
 
@@ -119,6 +131,10 @@ function makeDemoBook() {
           '<p>They were indeed a queer-looking party that assembled on the bank<sup class="footnote-ref" data-fn="d3f1" contenteditable="false">[1]</sup>—the birds with draggled feathers, the animals with their fur clinging close to them, and all dripping wet, cross, and uncomfortable.</p>' +
           '<p>The first question of course was, how to get dry again: they had a <a href="https://en.wikipedia.org/wiki/Caucus-race" title="A “Caucus-Race” follows — Carroll’s gentle mockery of political committees: much running in circles, no progress, and prizes for everyone.">consultation</a> about this, and after a few minutes it seemed quite natural to Alice to find herself talking familiarly with them, as if she had known them all her life.</p>',
       },
+    ],
+    people: [
+      { id: 'demo-p1', name: 'Alice', aliases: [], note: 'The curious protagonist who follows the Rabbit underground.' },
+      { id: 'demo-p2', name: 'White Rabbit', aliases: ['Rabbit'], note: 'The waistcoated herald whose hurry lures Alice down the hole.' },
     ],
   };
 }
@@ -610,6 +626,321 @@ els.editor.addEventListener('click', (e) => {
   if (ta) { ta.scrollIntoView({ block: 'center', behavior: 'smooth' }); flashEl(ta.closest('.fn-item')); ta.focus(); }
 });
 
+/* ---------------- People index & mentions ---------------- *
+ * A book-level cast list. Mentions are HYBRID:
+ *   - "suggested" = live word-boundary text matches not yet marked up.
+ *   - "confirmed" = the match wrapped in <span class="mention" data-person=ID>,
+ *     anchored by person id and underlined in the prose.
+ * Confirming a mention mutates the prose, so it follows the same undo discipline
+ * as footnotes/links (commitSnapshot before & after).                          */
+
+function personId() { return 'p' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-3); }
+function escapeRegExp(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// One case-insensitive, whole-word regex covering a person's name + aliases.
+function personRegex(p) {
+  const terms = [p.name].concat(p.aliases || []).map((t) => (t || '').trim()).filter(Boolean);
+  if (!terms.length) return /\b\B/g;                 // matches nothing
+  terms.sort((a, b) => b.length - a.length);         // longest alias wins
+  return new RegExp('\\b(?:' + terms.map(escapeRegExp).join('|') + ')\\b', 'gi');
+}
+
+// A short, centred excerpt with the matched name bracketed for the panel.
+function snip(text, idx, len) {
+  const pad = 22;
+  const a = Math.max(0, idx - pad), b = Math.min(text.length, idx + len + pad);
+  return (a > 0 ? '…' : '') + text.slice(a, idx) + '〈' + text.slice(idx, idx + len) +
+    '〉' + text.slice(idx + len, b) + (b < text.length ? '…' : '');
+}
+
+// occIndex = position within its kind (confirmed/suggested) inside its chapter.
+function indexByChapter(list) {
+  const c = {};
+  list.forEach((o) => { c[o.chapterId] = c[o.chapterId] || 0; o.occIndex = c[o.chapterId]++; });
+}
+
+// Tally a person across all chapters from the stored html (call syncActiveFromDom first).
+function scanPerson(p) {
+  const confirmed = [], suggested = [];
+  const re = personRegex(p);
+  state.chapters.forEach((ch) => {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = ch.html || '';
+    // confirmed: existing marker spans for this person, in document order
+    tmp.querySelectorAll('.mention[data-person="' + p.id + '"]').forEach((span) => {
+      const host = (span.parentNode && span.parentNode.textContent) || span.textContent || '';
+      const at = host.indexOf(span.textContent);
+      confirmed.push({ chapterId: ch.id, chapterTitle: ch.title,
+        snippet: snip(host, at < 0 ? 0 : at, span.textContent.length) });
+    });
+    // suggested: raw text matches not already wrapped in any mention
+    const walker = document.createTreeWalker(tmp, NodeFilter.SHOW_TEXT, null);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (node.parentElement && node.parentElement.closest('.mention')) continue;
+      const text = node.textContent; re.lastIndex = 0; let m;
+      while ((m = re.exec(text))) {
+        suggested.push({ chapterId: ch.id, chapterTitle: ch.title, snippet: snip(text, m.index, m[0].length) });
+        if (re.lastIndex === m.index) re.lastIndex++;
+      }
+    }
+  });
+  indexByChapter(confirmed);
+  indexByChapter(suggested);
+  return { confirmed, suggested };
+}
+
+// Locate the Nth still-unwrapped match of a regex in the LIVE editor.
+function findRawMatch(re, n) {
+  const walker = document.createTreeWalker(els.editor, NodeFilter.SHOW_TEXT, null);
+  let node, count = 0;
+  while ((node = walker.nextNode())) {
+    if (node.parentElement && node.parentElement.closest('.mention')) continue;
+    const local = new RegExp(re.source, re.flags); let m;
+    const text = node.textContent;
+    while ((m = local.exec(text))) {
+      if (count === n) return { node: node, start: m.index, end: m.index + m[0].length };
+      count++;
+      if (local.lastIndex === m.index) local.lastIndex++;
+    }
+  }
+  return null;
+}
+
+const STOP_WORDS = new Set(['The','A','An','And','But','Or','So','For','Yet','Nor','He','She','It','They',
+  'We','You','I','His','Her','Their','My','Your','Our','This','That','These','Those','There','Then','Than',
+  'When','Where','What','Who','Whom','Why','How','If','As','At','In','On','Of','To','From','With','By','Be',
+  'Was','Were','Had','Have','Has','Did','Do','Not','No','Yes','Oh','Ah','Well','Now','Here','Chapter',
+  'Mr','Mrs','Ms','Dr','St']);
+
+// Suggest capitalized names that recur but aren't yet on the list.
+function suggestNames() {
+  const counts = {};
+  const known = new Set();
+  state.people.forEach((p) => [p.name].concat(p.aliases || []).forEach((n) => n && known.add(n.toLowerCase())));
+  state.chapters.forEach((ch) => {
+    const tmp = document.createElement('div'); tmp.innerHTML = ch.html || '';
+    const text = tmp.textContent || '';
+    const re = /\b[A-Z][a-zà-öø-ÿ'’]+\b/g; let m;
+    while ((m = re.exec(text))) {
+      const w = m[0];
+      if (STOP_WORDS.has(w) || w.length < 3) continue;
+      counts[w] = (counts[w] || 0) + 1;
+    }
+  });
+  return Object.keys(counts)
+    .filter((w) => counts[w] >= 3 && !known.has(w.toLowerCase()))
+    .sort((a, b) => counts[b] - counts[a])
+    .slice(0, 8)
+    .map((w) => ({ name: w, count: counts[w] }));
+}
+
+function renderSuggestions() {
+  const sugg = suggestNames();
+  els.peopleSuggestions.innerHTML = '';
+  els.peopleSuggestions.style.display = sugg.length ? '' : 'none';
+  sugg.forEach((s) => {
+    const chip = document.createElement('button');
+    chip.className = 'suggest-chip';
+    chip.title = 'Add ' + s.name + ' to people';
+    chip.innerHTML = '＋ <b></b> <span></span>';
+    chip.querySelector('b').textContent = s.name;
+    chip.querySelector('span').textContent = '×' + s.count;
+    chip.addEventListener('click', () => addPerson(s.name));
+    els.peopleSuggestions.appendChild(chip);
+  });
+}
+
+function mentionRow(p, o, kind) {
+  const row = document.createElement('div');
+  row.className = 'mention-row ' + kind;
+  row.innerHTML = '<span class="m-dot"></span><span class="m-snippet"></span><span class="m-chap"></span>' +
+    (kind === 'suggested' ? '<button class="m-confirm" title="Mark as a real mention (adds an underline in the prose)">confirm</button>' : '');
+  row.querySelector('.m-snippet').textContent = o.snippet;
+  row.querySelector('.m-chap').textContent = o.chapterTitle;
+  row.addEventListener('click', (e) => {
+    if (e.target.closest('.m-confirm')) return;
+    jumpToMention(p.id, o.chapterId, kind, o.occIndex);
+  });
+  const cb = row.querySelector('.m-confirm');
+  if (cb) cb.addEventListener('click', (e) => { e.stopPropagation(); confirmMention(p.id, o.chapterId, o.occIndex); });
+  return row;
+}
+
+function renderPeople() {
+  syncActiveFromDom();
+  renderSuggestions();
+  els.peopleEmpty.style.display = state.people.length ? 'none' : '';
+  // don't tear down rows while the user is typing into one of them
+  if (document.activeElement && document.activeElement.closest &&
+      document.activeElement.closest('#people-list')) return;
+  els.peopleList.innerHTML = '';
+  state.people.forEach((p) => {
+    const occ = scanPerson(p);
+    const item = document.createElement('div');
+    item.className = 'person-item';
+    item.dataset.person = p.id;
+    item.innerHTML =
+      '<div class="person-top">' +
+        '<input class="person-name">' +
+        '<span class="person-count" title="confirmed ✓ / detected ?"></span>' +
+        '<button class="person-del" title="Remove person">✕</button>' +
+      '</div>' +
+      '<div class="person-body">' +
+        '<input class="person-aliases" placeholder="aliases, comma-separated">' +
+        '<textarea class="person-note" placeholder="Who they are, arc, reminders…"></textarea>' +
+        '<div class="person-mentions"></div>' +
+      '</div>';
+
+    const nameInput = item.querySelector('.person-name');
+    nameInput.value = p.name;
+    nameInput.addEventListener('input', () => { p.name = nameInput.value; scheduleSave(); });
+    nameInput.addEventListener('change', renderPeople);
+
+    const aliasInput = item.querySelector('.person-aliases');
+    aliasInput.value = (p.aliases || []).join(', ');
+    aliasInput.addEventListener('input', () => {
+      p.aliases = aliasInput.value.split(',').map((s) => s.trim()).filter(Boolean); scheduleSave();
+    });
+    aliasInput.addEventListener('change', renderPeople);
+
+    const noteArea = item.querySelector('.person-note');
+    noteArea.value = p.note || '';
+    noteArea.addEventListener('input', () => { p.note = noteArea.value; scheduleSave(); });
+
+    item.querySelector('.person-count').textContent = occ.confirmed.length + ' ✓ / ' + occ.suggested.length + ' ?';
+    item.querySelector('.person-del').addEventListener('click', () => deletePerson(p.id));
+
+    const mc = item.querySelector('.person-mentions');
+    if (!occ.confirmed.length && !occ.suggested.length) {
+      const e = document.createElement('div');
+      e.className = 'person-mentions-label';
+      e.textContent = 'No mentions found yet.';
+      mc.appendChild(e);
+    } else {
+      const label = document.createElement('div');
+      label.className = 'person-mentions-label';
+      label.textContent = 'Mentions';
+      mc.appendChild(label);
+      occ.confirmed.forEach((o) => mc.appendChild(mentionRow(p, o, 'confirmed')));
+      occ.suggested.forEach((o) => mc.appendChild(mentionRow(p, o, 'suggested')));
+    }
+    els.peopleList.appendChild(item);
+  });
+}
+
+function addPerson(name) {
+  name = (name || '').trim();
+  if (!name) return;
+  if (state.people.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
+    toast('“' + name + '” is already in your people'); return;
+  }
+  state.people.push({ id: personId(), name: name, aliases: [], note: '' });
+  els.personAdd.value = '';
+  renderPeople();
+  scheduleSave();
+}
+
+function deletePerson(id) {
+  const p = state.people.find((x) => x.id === id);
+  if (!p) return;
+  if (!confirm('Remove “' + p.name + '” from People and unwrap their confirmed mentions?')) return;
+  syncActiveFromDom();
+  state.chapters.forEach((ch) => {
+    const tmp = document.createElement('div'); tmp.innerHTML = ch.html || '';
+    const spans = tmp.querySelectorAll('.mention[data-person="' + id + '"]');
+    if (!spans.length) return;
+    spans.forEach((s) => s.replaceWith(document.createTextNode(s.textContent)));
+    tmp.normalize();
+    ch.html = tmp.innerHTML;
+  });
+  state.people = state.people.filter((x) => x.id !== id);
+  // reflect any unwrap in the live editor; this bulk edit isn't undoable, so drop the stale stack
+  const active = activeChapter();
+  if (active) { els.editor.innerHTML = active.html || ''; undoStacks.delete(activeId); }
+  renderNotes();
+  renderPeople();
+  scheduleSave();
+}
+
+// Wrap the Nth unwrapped match into a marker span — the hybrid "confirm" step.
+function confirmMention(pid, chapterId, occIndex) {
+  const p = state.people.find((x) => x.id === pid);
+  if (!p) return;
+  if (chapterId !== activeId) selectChapter(chapterId);
+  els.editor.focus();
+  commitSnapshot();                       // pre-wrap history boundary
+  const hit = findRawMatch(personRegex(p), occIndex);
+  if (!hit) { renderPeople(); return; }
+  const span = document.createElement('span');
+  span.className = 'mention';
+  span.dataset.person = pid;
+  const range = document.createRange();
+  range.setStart(hit.node, hit.start);
+  range.setEnd(hit.node, hit.end);
+  range.surroundContents(span);
+  syncActiveFromDom();
+  commitSnapshot();                       // post-wrap history boundary
+  scheduleSave();
+  renderPeople();
+  span.classList.add('mention-active');
+  span.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  setTimeout(() => span.classList.remove('mention-active'), 1200);
+}
+
+function jumpToMention(pid, chapterId, kind, occIndex) {
+  if (chapterId !== activeId) selectChapter(chapterId);
+  document.body.classList.remove('notes-hidden');
+  if (kind === 'confirmed') {
+    const el = els.editor.querySelectorAll('.mention[data-person="' + pid + '"]')[occIndex];
+    if (!el) return;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    el.classList.add('mention-active');
+    setTimeout(() => el.classList.remove('mention-active'), 1200);
+  } else {
+    const p = state.people.find((x) => x.id === pid);
+    if (!p) return;
+    const hit = findRawMatch(personRegex(p), occIndex);
+    if (!hit) return;
+    if (hit.node.parentElement) hit.node.parentElement.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const range = document.createRange();
+    range.setStart(hit.node, hit.start);
+    range.setEnd(hit.node, hit.end);
+    const sel = window.getSelection();
+    sel.removeAllRanges(); sel.addRange(range);   // native highlight, no DOM mutation
+  }
+}
+
+function activatePeopleTab() {
+  tabs.forEach((t) => t.classList.toggle('active', t.dataset.tab === 'people'));
+  els.paneAnnotations.hidden = true;
+  els.paneVersions.hidden = true;
+  els.panePeople.hidden = false;
+  renderPeople();
+}
+
+// debounced live refresh of counts while typing in the prose
+let peopleTimer = null;
+function schedulePeople() {
+  if (els.panePeople.hidden) return;
+  clearTimeout(peopleTimer);
+  peopleTimer = setTimeout(renderPeople, 400);
+}
+
+// click a person mention in the prose -> open the People tab and reveal that person
+els.editor.addEventListener('click', (e) => {
+  const span = e.target.closest('.mention');
+  if (!span) return;
+  activatePeopleTab();
+  const item = els.peopleList.querySelector('.person-item[data-person="' + span.dataset.person + '"]');
+  if (item) { item.scrollIntoView({ block: 'center', behavior: 'smooth' }); flashEl(item); }
+});
+
+els.personAddBtn.addEventListener('click', () => addPerson(els.personAdd.value));
+els.personAdd.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); addPerson(els.personAdd.value); }
+});
+
 els.chapterNote.addEventListener('input', () => {
   const ch = activeChapter();
   if (ch) { ch.note = els.chapterNote.value; scheduleSave(); }
@@ -814,11 +1145,13 @@ tabs.forEach((tab) => tab.addEventListener('click', () => {
   const name = tab.dataset.tab;
   els.paneAnnotations.hidden = name !== 'annotations';
   els.paneVersions.hidden = name !== 'versions';
+  els.panePeople.hidden = name !== 'people';
   if (name === 'versions') renderVersions();
+  if (name === 'people') renderPeople();
 }));
 
 /* ---------------- Editor input wiring ---------------- */
-els.editor.addEventListener('input', () => { updateTitleMeta(); scheduleSave(); refreshListWordcount(); renderNotes(); scheduleSnapshot(); });
+els.editor.addEventListener('input', () => { updateTitleMeta(); scheduleSave(); refreshListWordcount(); renderNotes(); schedulePeople(); scheduleSnapshot(); });
 els.chapterTitle.addEventListener('input', () => {
   const ch = activeChapter();
   if (ch) ch.title = els.chapterTitle.value;
@@ -902,6 +1235,45 @@ function htmlToMarkdown(root, fnMap) {
   return out;
 }
 
+// Which chapters each person appears in (confirmed marker OR raw text match).
+function peopleIndexEntries() {
+  return state.people.map((p) => {
+    const re = personRegex(p);
+    const chapters = [];
+    state.chapters.forEach((ch) => {
+      const tmp = document.createElement('div'); tmp.innerHTML = ch.html || '';
+      re.lastIndex = 0;
+      if (tmp.querySelector('.mention[data-person="' + p.id + '"]') || re.test(tmp.textContent || '')) {
+        chapters.push(ch.title);
+      }
+    });
+    return { name: p.name, note: (p.note || '').replace(/\s+/g, ' ').trim(), chapters: chapters };
+  }).filter((e) => e.chapters.length || e.note);
+}
+
+function buildPeopleIndexMd() {
+  const entries = peopleIndexEntries();
+  if (!entries.length) return '';
+  let s = '## Index of People\n\n';
+  entries.forEach((e) => {
+    s += '- **' + e.name + '**' + (e.note ? ' — ' + e.note : '') +
+      (e.chapters.length ? ' _(' + e.chapters.join(', ') + ')_' : '') + '\n';
+  });
+  return s + '\n';
+}
+
+function buildPeopleIndexHtml() {
+  const entries = peopleIndexEntries();
+  if (!entries.length) return '';
+  let s = '<section class="people-index">\n<h2>Index of People</h2>\n<ul>\n';
+  entries.forEach((e) => {
+    s += '<li><strong>' + escapeHtml(e.name) + '</strong>' +
+      (e.note ? ' — ' + escapeHtml(e.note) : '') +
+      (e.chapters.length ? ' <em>(' + e.chapters.map(escapeHtml).join(', ') + ')</em>' : '') + '</li>\n';
+  });
+  return s + '</ul>\n</section>\n';
+}
+
 // Number footnote markers in a temp container in document order; returns id->number.
 function footnoteMap(container) {
   const map = {};
@@ -926,6 +1298,7 @@ function buildMarkdown() {
       md += '\n';
     }
   });
+  md += buildPeopleIndexMd();
   return md.trim() + '\n';
 }
 
@@ -935,6 +1308,8 @@ function buildHtmlDoc() {
   state.chapters.forEach((ch) => {
     const tmp = document.createElement('div');
     tmp.innerHTML = ch.html || '';
+    // mention markers are an editor-time aid; export clean prose
+    tmp.querySelectorAll('.mention').forEach((s) => s.replaceWith(document.createTextNode(s.textContent)));
     const map = footnoteMap(tmp);
     body += '<section>\n<h2>' + escapeHtml(ch.title) + '</h2>\n' + tmp.innerHTML + '\n';
     const ordered = ch.footnotes.filter((f) => map[f.id]).sort((a, b) => map[a.id] - map[b.id]);
@@ -945,6 +1320,7 @@ function buildHtmlDoc() {
     }
     body += '</section>\n';
   });
+  body += buildPeopleIndexHtml();
   return '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<title>' +
     escapeHtml(state.title || 'Untitled Book') +
     '</title>\n<style>body{font-family:Georgia,serif;max-width:740px;margin:40px auto;' +
@@ -953,6 +1329,8 @@ function buildHtmlDoc() {
     'h1,h2,h3{text-align:left;hyphens:none}' +
     'a{color:#8a5a1e}blockquote{border-left:3px solid #c9a368;margin:1em 0;padding:.2em 1.2em;' +
     'font-style:italic;color:#555}section{margin-bottom:3em}' +
+    '.people-index{border-top:1px solid #ddd;margin-top:2em}.people-index ul{padding-left:1.2em}' +
+    '.people-index li{margin:.3em 0}.people-index em{color:#777}' +
     'sup.footnote-ref{color:#8a5a1e;font-weight:700}' +
     'ol.footnotes{font-size:14px;color:#555;line-height:1.6;border-top:0;margin-top:1.5em}' +
     'hr{border:none;border-top:1px solid #ddd;margin:2em 0}</style>\n</head>\n<body>\n' +
